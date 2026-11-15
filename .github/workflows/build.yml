@@ -34,6 +34,7 @@ jobs:
           for f in bios-256k.bin vgabios-stdvga.bin kvmvapic.bin linuxboot_dma.bin efi-virtio.rom efi-e1000.rom; do
             cp pc-bios/$f /w/out/share/
           done
+          cp -r build/pc-bios/keymaps /w/out/share/ 2>/dev/null || echo "no generated keymaps, using fallback"
           ls -la /w/out /w/out/share
           SCRIPT
           docker run --rm -v "$PWD:/w" -w /w alpine:3.20 sh build-qemu.sh
@@ -67,7 +68,7 @@ jobs:
           sed -i 's/ *android:extractNativeLibs="true"//' "$PROJ/app/src/main/AndroidManifest.xml"
           mkdir -p "$PROJ/app/src/main/jniLibs/arm64-v8a" "$PROJ/app/src/main/assets/qemu-share"
           cp qemu-out/libqemu.so "$PROJ/app/src/main/jniLibs/arm64-v8a/libqemu.so"
-          cp qemu-out/share/* "$PROJ/app/src/main/assets/qemu-share/"
+          cp -r qemu-out/share/. "$PROJ/app/src/main/assets/qemu-share/"
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }
       - name: Accept Android SDK licenses (preinstalled SDK)
@@ -77,7 +78,7 @@ jobs:
       - run: gradle -p "$PROJ" assembleDebug
       - name: Check that QEMU is inside the APK
         run: |
-          unzip -l "$PROJ/app/build/outputs/apk/debug/app-debug.apk" | grep -E "libqemu.so|qemu-share/bios"
+          unzip -l "$PROJ/app/build/outputs/apk/debug/app-debug.apk" | grep -E "libqemu.so|qemu-share/bios|keymaps/en-us"
       - uses: actions/upload-artifact@v4
         with:
           name: OneEmu-APK-with-QEMU
