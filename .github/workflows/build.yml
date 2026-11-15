@@ -62,6 +62,9 @@ jobs:
           PROJ=$(dirname "$SET")
           echo "Project folder: $PROJ"
           echo "PROJ=$PROJ" >> "$GITHUB_ENV"
+          F="$PROJ/app/src/main/java/com/oneemu/app/HomeScreen.kt"
+          grep -q "ExperimentalFoundationApi" "$F" || sed -i '1i @file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)' "$F"
+          sed -i 's/ *android:extractNativeLibs="true"//' "$PROJ/app/src/main/AndroidManifest.xml"
           mkdir -p "$PROJ/app/src/main/jniLibs/arm64-v8a" "$PROJ/app/src/main/assets/qemu-share"
           cp qemu-out/libqemu.so "$PROJ/app/src/main/jniLibs/arm64-v8a/libqemu.so"
           cp qemu-out/share/* "$PROJ/app/src/main/assets/qemu-share/"
