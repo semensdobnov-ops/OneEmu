@@ -24,9 +24,13 @@ jobs:
 
       - name: Patch build.gradle.kts
         run: |
-          # Ищем файл в папке app и добавляем флаг
-          find project -path "*/app/build.gradle.kts" -exec sed -i '/kotlinOptions {/a \        freeCompilerArgs += "-opt-in=kotlin.RequiresOptIn"\n        freeCompilerArgs += "-opt-in=androidx.compose.foundation.ExperimentalFoundationApi"\n        freeCompilerArgs += "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api"' {} \;
+          # Ищем файл в папке app и заменяем блок компиляции на новый
+          find project -path "*/app/build.gradle.kts" -exec sed -i '/android {/a \    kotlinOptions {\n        freeCompilerArgs += listOf("-opt-in=kotlin.RequiresOptIn", "-opt-in=androidx.compose.foundation.ExperimentalFoundationApi", "-opt-in=androidx.compose.material3.ExperimentalMaterial3Api")\n    }' {} \;
           
+          # Проверяем, что вставилось
+          echo "--- ПРОВЕРКА ФАЙЛА ---"
+          cat project/OneEmu/app/build.gradle.kts
+
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v3
         with:
