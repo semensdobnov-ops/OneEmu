@@ -50,22 +50,27 @@ jobs:
         with:
           name: qemu
           path: qemu-out
-      - name: Put QEMU into the app
+      - name: Find project folder and put QEMU into the app
         run: |
-          mkdir -p app/src/main/jniLibs/arm64-v8a app/src/main/assets/qemu-share
-          cp qemu-out/libqemu.so app/src/main/jniLibs/arm64-v8a/libqemu.so
-          cp qemu-out/share/* app/src/main/assets/qemu-share/
+          SET=$(find . -name settings.gradle.kts -not -path "*/build/*" | head -1)
+          if [ -z "$SET" ]; then echo "settings.gradle.kts NOT FOUND. Repo contents:"; find . -maxdepth 3 -not -path "./.git/*" | head -80; exit 1; fi
+          PROJ=$(dirname "$SET")
+          echo "Project folder: $PROJ"
+          echo "PROJ=$PROJ" >> "$GITHUB_ENV"
+          mkdir -p "$PROJ/app/src/main/jniLibs/arm64-v8a" "$PROJ/app/src/main/assets/qemu-share"
+          cp qemu-out/libqemu.so "$PROJ/app/src/main/jniLibs/arm64-v8a/libqemu.so"
+          cp qemu-out/share/* "$PROJ/app/src/main/assets/qemu-share/"
       - uses: actions/setup-java@v4
         with: { distribution: temurin, java-version: 17 }
       - name: Accept Android SDK licenses (preinstalled SDK)
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
       - uses: gradle/actions/setup-gradle@v3
         with: { gradle-version: "8.7" }
-      - run: gradle assembleDebug
+      - run: gradle -p "$PROJ" assembleDebug
       - name: Check that QEMU is inside the APK
         run: |
-          unzip -l app/build/outputs/apk/debug/app-debug.apk | grep -E "libqemu.so|qemu-share/bios"
+          unzip -l "$PROJ/app/build/outputs/apk/debug/app-debug.apk" | grep -E "libqemu.so|qemu-share/bios"
       - uses: actions/upload-artifact@v4
         with:
           name: OneEmu-APK-with-QEMU
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: ${{ env.PROJ }}/app/build/outputs/apk/debug/app-debug.apk
