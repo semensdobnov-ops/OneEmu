@@ -17,9 +17,9 @@ jobs:
           curl -fLO https://download.qemu.org/qemu-9.0.2.tar.xz
           tar xf qemu-9.0.2.tar.xz
           cd qemu-9.0.2
-          OPTS="--static --target-list=x86_64-softmmu --disable-docs --disable-tools --disable-guest-agent --disable-werror --disable-gtk --disable-sdl --disable-opengl --disable-curses --disable-kvm"
+          OPTS="--static --target-list=x86_64-softmmu --disable-docs --disable-tools --disable-guest-agent --disable-werror --disable-gtk --disable-sdl --disable-opengl --disable-curses --disable-kvm --disable-dbus-display"
           ./configure $OPTS || { echo "CONFIGURE FAILED, retry without slirp"; ./configure $OPTS --disable-slirp; }
-          make -j"$(nproc)"
+          make -j"$(nproc)" qemu-system-x86_64
           mkdir -p /w/out/share
           strip build/qemu-system-x86_64
           cp build/qemu-system-x86_64 /w/out/libqemu.so
