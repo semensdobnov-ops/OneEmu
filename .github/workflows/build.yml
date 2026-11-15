@@ -10,15 +10,23 @@ jobs:
           cat > build-qemu.sh <<'SCRIPT'
           set -e
           apk add --no-cache build-base git python3 py3-setuptools ninja meson pkgconf bash flex bison perl curl xz linux-headers
-          for p in glib-dev glib-static pixman-dev pixman-static zlib-dev zlib-static libslirp-dev pcre2-dev libffi-dev gettext-dev gettext-static zstd-dev zstd-static util-linux-dev; do
+          for p in glib-dev glib-static pixman-dev pixman-static zlib-dev zlib-static pcre2-dev libffi-dev gettext-dev gettext-static zstd-dev zstd-static util-linux-dev; do
             apk add --no-cache "$p" || echo "SKIP $p"
           done
           cd /tmp
           curl -fLO https://download.qemu.org/qemu-9.0.2.tar.xz
           tar xf qemu-9.0.2.tar.xz
           cd qemu-9.0.2
-          OPTS="--static --target-list=x86_64-softmmu --disable-docs --disable-tools --disable-guest-agent --disable-werror --disable-gtk --disable-sdl --disable-opengl --disable-curses --disable-kvm --disable-dbus-display"
-          ./configure $OPTS || { echo "CONFIGURE FAILED, retry without slirp"; ./configure $OPTS --disable-slirp; }
+          SLIRP=1
+          (cd /tmp && git clone --depth 1 --branch v4.8.0 https://gitlab.freedesktop.org/slirp/libslirp.git && cd libslirp && meson setup build --default-library=static --prefix=/usr/local && ninja -C build install) || SLIRP=0
+          export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig
+          cd /tmp/qemu-9.0.2
+          OPTS="--static --target-list=x86_64-softmmu --disable-docs --disable-tools --disable-guest-agent --disable-werror --disable-gtk --disable-sdl --disable-opengl --disable-curses --disable-kvm --disable-dbus-display --disable-gio --disable-bzip2"
+          if [ "$SLIRP" = 1 ]; then
+            ./configure $OPTS --enable-slirp || { echo "RETRY WITHOUT SLIRP"; ./configure $OPTS --disable-slirp; }
+          else
+            ./configure $OPTS --disable-slirp
+          fi
           make -j"$(nproc)" qemu-system-x86_64
           mkdir -p /w/out/share
           strip build/qemu-system-x86_64
