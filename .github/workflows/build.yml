@@ -52,7 +52,12 @@ jobs:
           path: qemu-out
       - name: Find project folder and put QEMU into the app
         run: |
-          SET=$(find . -name settings.gradle.kts -not -path "*/build/*" | head -1)
+          SET=$(find . -name settings.gradle.kts -not -path "./qemu-out/*" -not -path "*/build/*" | head -1)
+          if [ -z "$SET" ] && [ -f OneEmu.zip ]; then
+            echo "Project not found in repo, unpacking OneEmu.zip"
+            unzip -q -o OneEmu.zip -d unpacked
+            SET=$(find unpacked -name settings.gradle.kts | head -1)
+          fi
           if [ -z "$SET" ]; then echo "settings.gradle.kts NOT FOUND. Repo contents:"; find . -maxdepth 3 -not -path "./.git/*" | head -80; exit 1; fi
           PROJ=$(dirname "$SET")
           echo "Project folder: $PROJ"
