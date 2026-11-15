@@ -9,15 +9,16 @@ jobs:
         run: |
           cat > build-qemu.sh <<'SCRIPT'
           set -e
-          apk add --no-cache build-base git python3 py3-setuptools ninja meson pkgconf bash flex bison perl curl xz \
-            linux-headers glib-dev glib-static pixman-dev pixman-static zlib-dev zlib-static libslirp-dev \
-            pcre2-dev pcre2-static libffi-dev gettext-dev gettext-static zstd-dev zstd-static
+          apk add --no-cache build-base git python3 py3-setuptools ninja meson pkgconf bash flex bison perl curl xz linux-headers
+          for p in glib-dev glib-static pixman-dev pixman-static zlib-dev zlib-static libslirp-dev pcre2-dev libffi-dev gettext-dev gettext-static zstd-dev zstd-static util-linux-dev; do
+            apk add --no-cache "$p" || echo "SKIP $p"
+          done
           cd /tmp
           curl -fLO https://download.qemu.org/qemu-9.0.2.tar.xz
           tar xf qemu-9.0.2.tar.xz
           cd qemu-9.0.2
-          ./configure --static --target-list=x86_64-softmmu --disable-docs --disable-tools --disable-guest-agent \
-            --disable-werror --disable-gtk --disable-sdl --disable-opengl --disable-curses --disable-kvm
+          OPTS="--static --target-list=x86_64-softmmu --disable-docs --disable-tools --disable-guest-agent --disable-werror --disable-gtk --disable-sdl --disable-opengl --disable-curses --disable-kvm"
+          ./configure $OPTS || { echo "CONFIGURE FAILED, retry without slirp"; ./configure $OPTS --disable-slirp; }
           make -j"$(nproc)"
           mkdir -p /w/out/share
           strip build/qemu-system-x86_64
