@@ -25,8 +25,7 @@ jobs:
             OPTS="--static --target-list=aarch64-softmmu --disable-docs --disable-tools --disable-guest-agent --disable-werror --disable-gtk --disable-sdl --disable-opengl --disable-curses --disable-kvm --disable-dbus-display --disable-gio --disable-bzip2 --enable-vnc"
             if [ "$SLIRP" = 1 ]; then ./configure $OPTS --enable-slirp || ./configure $OPTS --disable-slirp; else ./configure $OPTS --disable-slirp; fi
             make -j"$(nproc)" qemu-system-aarch64
-            build/qemu-system-aarch64 -display help 2>&1 | tee /tmp/qemu-display.txt
-            grep -qi vnc /tmp/qemu-display.txt
+            grep -q "define CONFIG_VNC 1" build/config-host.h
             build/qemu-system-aarch64 -device help 2>&1 | grep -q "virtio-gpu-pci"
             build/qemu-system-aarch64 -device help 2>&1 | grep -q "ramfb"
             mkdir -p /w/qemu-out/share
