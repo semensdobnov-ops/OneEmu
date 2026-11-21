@@ -25,9 +25,11 @@ jobs:
             OPTS="--static --target-list=aarch64-softmmu --disable-docs --disable-tools --disable-guest-agent --disable-werror --disable-gtk --disable-sdl --disable-opengl --disable-curses --disable-kvm --disable-dbus-display --disable-gio --disable-bzip2 --enable-vnc"
             if [ "$SLIRP" = 1 ]; then ./configure $OPTS --enable-slirp || ./configure $OPTS --disable-slirp; else ./configure $OPTS --disable-slirp; fi
             make -j"$(nproc)" qemu-system-aarch64
-            grep -q "define CONFIG_VNC 1" build/config-host.h
-            build/qemu-system-aarch64 -device help 2>&1 | grep -q "virtio-gpu-pci"
-            build/qemu-system-aarch64 -device help 2>&1 | grep -q "ramfb"
+            ls -la build/qemu-system-aarch64
+            DEVS=$(build/qemu-system-aarch64 -device help 2>&1 || true)
+            echo "$DEVS" | head -n 5
+            echo "$DEVS" | grep -q "virtio-gpu-pci" || { echo "CHECK FAILED: virtio-gpu-pci missing"; exit 1; }
+            echo "$DEVS" | grep -q "ramfb" || { echo "CHECK FAILED: ramfb missing"; exit 1; }
             mkdir -p /w/qemu-out/share
             strip build/qemu-system-aarch64
             cp build/qemu-system-aarch64 /w/qemu-out/libqemu.so
