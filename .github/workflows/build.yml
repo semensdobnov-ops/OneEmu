@@ -9,12 +9,12 @@ permissions:
   contents: read
 
 concurrency:
-  group: oneemu-${{ github.ref }}
+  group: oneemu-build-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build-qemu:
-    name: Build QEMU for Android ARM64
+    name: Build QEMU ARM64
     runs-on: ubuntu-24.04-arm
 
     steps:
@@ -22,36 +22,52 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build QEMU
+        shell: bash
         run: |
-          set -euxo pipefail
+          set -euo pipefail
 
           docker run --rm \
             -v "$PWD:/work" \
             -w /work \
             alpine:3.20 sh -euxc '
-              apk add --no-cache \
-                build-base git python3 py3-setuptools \
-                ninja meson pkgconf bash flex bison perl \
-                curl xz linux-headers bzip2
 
-              for p in \
-                glib-dev glib-static pixman-dev pixman-static \
-                zlib-dev zlib-static pcre2-dev libffi-dev \
-                gettext-dev zstd-dev zstd-static util-linux-dev
-              do
-                apk add --no-cache "$p" || true
-              done
+              apk add --no-cache \
+                build-base \
+                git \
+                python3 \
+                py3-setuptools \
+                ninja \
+                meson \
+                pkgconf \
+                bash \
+                flex \
+                bison \
+                perl \
+                curl \
+                xz \
+                linux-headers \
+                bzip2 \
+                glib-dev \
+                pixman-dev \
+                zlib-dev \
+                pcre2-dev \
+                libffi-dev \
+                gettext-dev \
+                zstd-dev \
+                util-linux-dev \
+                util-linux-static
 
               cd /tmp
+
               curl -fL \
                 https://download.qemu.org/qemu-9.0.2.tar.xz \
                 -o qemu.tar.xz
 
               tar -xf qemu.tar.xz
+
               cd qemu-9.0.2
 
               ./configure \
-                --static \
                 --target-list=aarch64-softmmu \
                 --disable-docs \
                 --disable-tools \
@@ -64,7 +80,9 @@ jobs:
                 --disable-kvm \
                 --disable-dbus-display \
                 --disable-slirp \
-                --disable-bzip2
+                --disable-bzip2 \
+                --disable-libudev \
+                --disable-linux-aio
 
               make -j"$(nproc)" qemu-system-aarch64
 
@@ -82,16 +100,19 @@ jobs:
                 /work/qemu-out/share/
 
               if [ -f pc-bios/efi-virtio.rom ]; then
-                cp pc-bios/efi-virtio.rom /work/qemu-out/share/
+                cp pc-bios/efi-virtio.rom \
+                  /work/qemu-out/share/
               fi
 
               if [ -d build/pc-bios/keymaps ]; then
                 cp -r build/pc-bios/keymaps \
                   /work/qemu-out/share/
               fi
+
+              echo "QEMU build completed"
             '
 
-      - name: Verify QEMU binary
+      - name: Verify QEMU
         run: |
           set -euo pipefail
 
@@ -100,10 +121,14 @@ jobs:
 
           file qemu-out/bin/qemu-system-aarch64
 
-          readelf -h qemu-out/bin/qemu-system-aarch64
-
           readelf -h qemu-out/bin/qemu-system-aarch64 \
-            | grep -q 'AArch64'
+            | grep AArch64
+
+          readelf -l qemu-out/bin/qemu-system-aarch64 \
+            | grep INTERP && {
+              echo "ERROR: QEMU is dynamically linked"
+              exit 1
+            } || true
 
           chmod 755 qemu-out/bin/qemu-system-aarch64
 
@@ -115,7 +140,7 @@ jobs:
           if-no-files-found: error
 
   build-apk:
-    name: Build and verify Android APK
+    name: Build Android APK
     needs: build-qemu
     runs-on: ubuntu-latest
 
@@ -129,13 +154,14 @@ jobs:
           name: oneemu-qemu-arm64
           path: qemu-out
 
-      - name: Locate OneEmu project
-        id: project
+      - name: Locate project
         run: |
           set -euo pipefail
 
+          SET=""
+
           if [ -f settings.gradle.kts ]; then
-            PROJ="."
+            SET="settings.gradle.kts"
           else
             SET=$(find . \
               -name settings.gradle.kts \
@@ -143,42 +169,39 @@ jobs:
               -not -path '*/build/*' \
               -not -path './.git/*' \
               | head -n 1 || true)
-
-            if [ -z "$SET" ] && [ -f OneEmu.zip ]; then
-              mkdir -p unpacked
-              unzip -q OneEmu.zip -d unpacked
-
-              SET=$(find unpacked \
-                -name settings.gradle.kts \
-                -not -path '*/build/*' \
-                | head -n 1 || true)
-            fi
-
-            if [ -z "$SET" ]; then
-              echo "ERROR: Gradle project not found"
-              find . -maxdepth 4 -type f | head -100
-              exit 1
-            fi
-
-            PROJ=$(dirname "$SET")
           fi
 
-          echo "Project: $PROJ"
+          if [ -z "$SET" ] && [ -f OneEmu.zip ]; then
+            mkdir -p unpacked
+            unzip -q OneEmu.zip -d unpacked
+
+            SET=$(find unpacked \
+              -name settings.gradle.kts \
+              -not -path '*/build/*' \
+              | head -n 1 || true)
+          fi
+
+          if [ -z "$SET" ]; then
+            echo "ERROR: Project not found"
+            exit 1
+          fi
+
+          PROJ=$(dirname "$SET")
+
           echo "PROJ=$PROJ" >> "$GITHUB_ENV"
 
-      - name: Check project files
+          echo "Project found: $PROJ"
+
+      - name: Check project
         run: |
           set -euo pipefail
-
-          test -f "$PROJ/app/build.gradle.kts" \
-            || test -f "$PROJ/app/build.gradle"
 
           test -f "$PROJ/app/src/main/AndroidManifest.xml"
 
           test -s qemu-out/bin/qemu-system-aarch64
           test -s qemu-out/share/edk2-aarch64-code.fd
 
-      - name: Install QEMU in Android project
+      - name: Install QEMU assets
         run: |
           set -euo pipefail
 
@@ -192,8 +215,6 @@ jobs:
           cp -r qemu-out/share/. \
             "$PROJ/app/src/main/assets/qemu/share/"
 
-          find "$PROJ/app/src/main/assets/qemu" -type f -ls
-
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
@@ -203,14 +224,14 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Accept Android SDK licenses
+      - name: Accept Android licenses
         run: |
           yes | sdkmanager --licenses >/dev/null || true
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Build debug APK
+      - name: Build APK
         run: |
           set -euo pipefail
 
@@ -229,16 +250,10 @@ jobs:
 
           APK="$PROJ/app/build/outputs/apk/debug/app-debug.apk"
 
-          if [ ! -s "$APK" ]; then
-            echo "ERROR: APK was not created"
-            exit 1
-          fi
+          test -s "$APK"
 
           mkdir -p apk-check
           unzip -q "$APK" -d apk-check
-
-          echo "APK contents:"
-          unzip -l "$APK"
 
           test -s \
             apk-check/assets/qemu/bin/qemu-system-aarch64
@@ -246,37 +261,11 @@ jobs:
           test -s \
             apk-check/assets/qemu/share/edk2-aarch64-code.fd
 
-          file \
-            apk-check/assets/qemu/bin/qemu-system-aarch64
-
-          echo "APK verification completed"
-
-      - name: Save build report
-        if: always()
-        run: |
-          mkdir -p build-report
-
-          {
-            echo "OneEmu build report"
-            echo "Date: $(date -u)"
-            echo "Project: ${PROJ:-not-found}"
-            echo "Runner: $RUNNER_OS"
-            echo "Architecture: ARM64 QEMU"
-            echo "QEMU version: 9.0.2"
-          } > build-report/report.txt
+          echo "APK verification successful"
 
       - name: Upload APK
-        if: success()
         uses: actions/upload-artifact@v4
         with:
           name: OneEmu-APK
           path: ${{ env.PROJ }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
-
-      - name: Upload build report
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: OneEmu-build-report
-          path: build-report/
-          if-no-files-found: warn
