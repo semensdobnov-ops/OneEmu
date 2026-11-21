@@ -35,19 +35,43 @@ jobs:
             ninja-build meson pkg-config flex bison \
             perl xz-utils bzip2 unzip file
 
-      - name: Install Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: Accept Android SDK licenses
+      - name: Locate Android SDK
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses || true
+
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
+
+          if [ ! -x "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
+            SDK="$(dirname "$(dirname "$(find /usr/local/lib/android/sdk/cmdline-tools \
+              -name sdkmanager -type f | head -n 1)")")"
+            SDK="$(dirname "$(dirname "$SDK")")"
+          fi
+
+          SDKMANAGER=$(find "$SDK/cmdline-tools" \
+            -name sdkmanager -type f | head -n 1)
+
+          if [ -z "$SDKMANAGER" ]; then
+            echo "ERROR: sdkmanager not found"
+            exit 1
+          fi
+
+          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
+          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
+          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
+
+          echo "SDK: $SDK"
+          echo "SDK Manager: $SDKMANAGER"
+
+      - name: Accept SDK licenses
+        run: |
+          set -euo pipefail
+          yes | "$SDKMANAGER" --licenses || true
 
       - name: Install Android NDK
         run: |
           set -euo pipefail
 
-          sdkmanager --install \
+          "$SDKMANAGER" --install \
             "ndk;${ANDROID_NDK_VERSION}"
 
           NDK="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
@@ -58,14 +82,16 @@ jobs:
           fi
 
           echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
-          echo "NDK installed successfully"
+          echo "NDK installed: $NDK"
 
       - name: Download QEMU
         run: |
           set -euo pipefail
+
           curl -fL \
             "https://download.qemu.org/qemu-${QEMU_VERSION}.tar.xz" \
             -o qemu.tar.xz
+
           tar -xf qemu.tar.xz
 
       - name: Configure Android toolchain
@@ -81,6 +107,7 @@ jobs:
       - name: Configure QEMU
         run: |
           set -euo pipefail
+
           cd "qemu-${QEMU_VERSION}"
 
           export CC="$TOOLCHAIN/aarch64-linux-android${ANDROID_API}-clang"
@@ -113,6 +140,7 @@ jobs:
       - name: Compile QEMU
         run: |
           set -euo pipefail
+
           cd "qemu-${QEMU_VERSION}"
 
           make -j2 qemu-system-aarch64
@@ -131,7 +159,7 @@ jobs:
           cp pc-bios/edk2-aarch64-code.fd \
             ../qemu-out/share/
 
-      - name: Verify QEMU binary
+      - name: Verify QEMU
         run: |
           set -euo pipefail
 
@@ -140,8 +168,6 @@ jobs:
           test -s "$BIN"
           file "$BIN"
           readelf -h "$BIN" | grep AArch64
-
-          echo "QEMU binary exists"
 
       - name: Upload QEMU
         uses: actions/upload-artifact@v4
@@ -186,6 +212,7 @@ jobs:
           if [ -z "$SET" ] && [ -f OneEmu.zip ]; then
             mkdir -p unpacked
             unzip -q OneEmu.zip -d unpacked
+
             SET=$(find unpacked \
               \( -name settings.gradle.kts -o -name settings.gradle \) \
               -not -path '*/build/*' \
@@ -217,15 +244,13 @@ jobs:
           distribution: temurin
           java-version: "17"
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
-
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
       - name: Build APK
         run: |
           set -euo pipefail
+
           cd "$PROJ"
 
           if [ -f gradlew ]; then
@@ -240,6 +265,7 @@ jobs:
           set -euo pipefail
 
           APK="$PROJ/app/build/outputs/apk/debug/app-debug.apk"
+
           test -s "$APK"
 
           mkdir -p apk-check
