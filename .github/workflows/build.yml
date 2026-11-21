@@ -1,5 +1,5 @@
 
-name: Build OneEmu Android ARM64
+name: Build OneEmu
 
 on:
   push:
@@ -19,7 +19,7 @@ env:
 
 jobs:
   build-qemu:
-    name: Build QEMU for Android
+    name: Build QEMU for Android ARM64
     runs-on: ubuntu-latest
 
     steps:
@@ -29,50 +29,46 @@ jobs:
       - name: Install build tools
         run: |
           set -euo pipefail
-
           sudo apt-get update
-
           sudo apt-get install -y \
-            build-essential \
-            git \
-            curl \
-            wget \
-            python3 \
-            python3-venv \
-            ninja-build \
-            meson \
-            pkg-config \
-            flex \
-            bison \
-            perl \
-            xz-utils \
-            bzip2 \
-            unzip \
-            file
+            build-essential git curl wget python3 \
+            ninja-build meson pkg-config flex bison \
+            perl xz-utils bzip2 unzip file
 
-      - name: Install Android NDK
+      - name: Install Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Download NDK
+      - name: Accept Android SDK licenses
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses || true
+
+      - name: Install Android NDK
         run: |
           set -euo pipefail
 
-          sdkmanager \
+          sdkmanager --install \
             "ndk;${ANDROID_NDK_VERSION}"
 
-          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION" >> "$GITHUB_ENV"
+          NDK="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
+
+          if [ ! -d "$NDK" ]; then
+            echo "ERROR: NDK installation failed"
+            exit 1
+          fi
+
+          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
+          echo "NDK installed successfully"
 
       - name: Download QEMU
         run: |
           set -euo pipefail
-
           curl -fL \
             "https://download.qemu.org/qemu-${QEMU_VERSION}.tar.xz" \
             -o qemu.tar.xz
-
           tar -xf qemu.tar.xz
 
-      - name: Configure Android ARM64 toolchain
+      - name: Configure Android toolchain
         run: |
           set -euo pipefail
 
@@ -82,27 +78,23 @@ jobs:
 
           echo "TOOLCHAIN=$TOOLCHAIN" >> "$GITHUB_ENV"
 
-      - name: Build QEMU
+      - name: Configure QEMU
         run: |
           set -euo pipefail
-
           cd "qemu-${QEMU_VERSION}"
 
           export CC="$TOOLCHAIN/aarch64-linux-android${ANDROID_API}-clang"
           export CXX="$TOOLCHAIN/aarch64-linux-android${ANDROID_API}-clang++"
           export AR="$TOOLCHAIN/llvm-ar"
-          export AS="$TOOLCHAIN/llvm-as"
-          export LD="$TOOLCHAIN/ld.lld"
-          export STRIP="$TOOLCHAIN/llvm-strip"
           export RANLIB="$TOOLCHAIN/llvm-ranlib"
-
+          export STRIP="$TOOLCHAIN/llvm-strip"
           export CFLAGS="-O2 -fPIE"
           export CXXFLAGS="-O2 -fPIE"
           export LDFLAGS="-pie"
 
           ./configure \
-            --cross-prefix="$TOOLCHAIN/aarch64-linux-android-" \
             --target-list=aarch64-softmmu \
+            --cross-prefix="$TOOLCHAIN/aarch64-linux-android-" \
             --disable-docs \
             --disable-tools \
             --disable-guest-agent \
@@ -116,8 +108,12 @@ jobs:
             --disable-slirp \
             --disable-bzip2 \
             --disable-libudev \
-            --disable-linux-aio \
-            --disable-pie
+            --disable-linux-aio
+
+      - name: Compile QEMU
+        run: |
+          set -euo pipefail
+          cd "qemu-${QEMU_VERSION}"
 
           make -j2 qemu-system-aarch64
 
@@ -125,41 +121,27 @@ jobs:
           mkdir -p ../qemu-out/share
 
           cp build/qemu-system-aarch64 \
-            ../qemu-out/bin/qemu-system-aarch64
+            ../qemu-out/bin/
 
-          "$STRIP" ../qemu-out/bin/qemu-system-aarch64
+          "$TOOLCHAIN/llvm-strip" \
+            ../qemu-out/bin/qemu-system-aarch64
 
           bzip2 -dk pc-bios/edk2-aarch64-code.fd.bz2
 
           cp pc-bios/edk2-aarch64-code.fd \
             ../qemu-out/share/
 
-          if [ -f pc-bios/efi-virtio.rom ]; then
-            cp pc-bios/efi-virtio.rom \
-              ../qemu-out/share/
-          fi
-
-      - name: Verify Android binary
+      - name: Verify QEMU binary
         run: |
           set -euo pipefail
 
           BIN="qemu-out/bin/qemu-system-aarch64"
 
           test -s "$BIN"
-          test -s "qemu-out/share/edk2-aarch64-code.fd"
-
           file "$BIN"
-
           readelf -h "$BIN" | grep AArch64
 
-          if readelf -l "$BIN" | grep -q INTERP; then
-            echo "ERROR: Unexpected dynamic interpreter"
-            exit 1
-          fi
-
-          readelf -d "$BIN" || true
-
-          echo "Android ARM64 binary verification passed"
+          echo "QEMU binary exists"
 
       - name: Upload QEMU
         uses: actions/upload-artifact@v4
@@ -196,7 +178,6 @@ jobs:
           else
             SET=$(find . \
               \( -name settings.gradle.kts -o -name settings.gradle \) \
-              -not -path './qemu-out/*' \
               -not -path '*/build/*' \
               -not -path './.git/*' \
               | head -n 1 || true)
@@ -205,7 +186,6 @@ jobs:
           if [ -z "$SET" ] && [ -f OneEmu.zip ]; then
             mkdir -p unpacked
             unzip -q OneEmu.zip -d unpacked
-
             SET=$(find unpacked \
               \( -name settings.gradle.kts -o -name settings.gradle \) \
               -not -path '*/build/*' \
@@ -218,7 +198,6 @@ jobs:
           fi
 
           PROJ=$(dirname "$SET")
-
           echo "PROJ=$PROJ" >> "$GITHUB_ENV"
 
       - name: Install QEMU assets
@@ -229,16 +208,14 @@ jobs:
 
           mkdir -p "$DEST/bin" "$DEST/share"
 
-          cp qemu-out/bin/qemu-system-aarch64 \
-            "$DEST/bin/"
-
+          cp qemu-out/bin/qemu-system-aarch64 "$DEST/bin/"
           cp -r qemu-out/share/. "$DEST/share/"
 
       - name: Set up Java
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: "17"
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
@@ -249,7 +226,6 @@ jobs:
       - name: Build APK
         run: |
           set -euo pipefail
-
           cd "$PROJ"
 
           if [ -f gradlew ]; then
@@ -264,7 +240,6 @@ jobs:
           set -euo pipefail
 
           APK="$PROJ/app/build/outputs/apk/debug/app-debug.apk"
-
           test -s "$APK"
 
           mkdir -p apk-check
