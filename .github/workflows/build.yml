@@ -1,284 +1,82 @@
-
-name: Build OneEmu
-
-on:
-  push:
-  workflow_dispatch:
-
-permissions:
-  contents: read
-
-concurrency:
-  group: oneemu-${{ github.ref }}
-  cancel-in-progress: true
-
-env:
-  QEMU_VERSION: "9.0.2"
-  ANDROID_NDK_VERSION: "27.2.12479018"
-  ANDROID_API: "26"
+name: Build OneEmu ARM64 APK
+on: [push, workflow_dispatch]
 
 jobs:
-  build-qemu:
-    name: Build QEMU for Android ARM64
-    runs-on: ubuntu-latest
-
+  qemu:
+    runs-on: ubuntu-24.04-arm
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install build tools
+      - uses: actions/checkout@v4
+      - name: Build static ARM64 QEMU
         run: |
-          set -euo pipefail
-          sudo apt-get update
-          sudo apt-get install -y \
-            build-essential git curl wget python3 \
-            ninja-build meson pkg-config flex bison \
-            perl xz-utils bzip2 unzip file
-
-      - name: Locate Android SDK
-        run: |
-          set -euo pipefail
-
-          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-/usr/local/lib/android/sdk}}"
-
-          if [ ! -x "$SDK/cmdline-tools/latest/bin/sdkmanager" ]; then
-            SDK="$(dirname "$(dirname "$(find /usr/local/lib/android/sdk/cmdline-tools \
-              -name sdkmanager -type f | head -n 1)")")"
-            SDK="$(dirname "$(dirname "$SDK")")"
-          fi
-
-          SDKMANAGER=$(find "$SDK/cmdline-tools" \
-            -name sdkmanager -type f | head -n 1)
-
-          if [ -z "$SDKMANAGER" ]; then
-            echo "ERROR: sdkmanager not found"
-            exit 1
-          fi
-
-          echo "ANDROID_HOME=$SDK" >> "$GITHUB_ENV"
-          echo "ANDROID_SDK_ROOT=$SDK" >> "$GITHUB_ENV"
-          echo "SDKMANAGER=$SDKMANAGER" >> "$GITHUB_ENV"
-
-          echo "SDK: $SDK"
-          echo "SDK Manager: $SDKMANAGER"
-
-      - name: Accept SDK licenses
-        run: |
-          set -euo pipefail
-          yes | "$SDKMANAGER" --licenses || true
-
-      - name: Install Android NDK
-        run: |
-          set -euo pipefail
-
-          "$SDKMANAGER" --install \
-            "ndk;${ANDROID_NDK_VERSION}"
-
-          NDK="$ANDROID_HOME/ndk/$ANDROID_NDK_VERSION"
-
-          if [ ! -d "$NDK" ]; then
-            echo "ERROR: NDK installation failed"
-            exit 1
-          fi
-
-          echo "ANDROID_NDK_HOME=$NDK" >> "$GITHUB_ENV"
-          echo "NDK installed: $NDK"
-
-      - name: Download QEMU
-        run: |
-          set -euo pipefail
-
-          curl -fL \
-            "https://download.qemu.org/qemu-${QEMU_VERSION}.tar.xz" \
-            -o qemu.tar.xz
-
-          tar -xf qemu.tar.xz
-
-      - name: Configure Android toolchain
-        run: |
-          set -euo pipefail
-
-          TOOLCHAIN="$ANDROID_NDK_HOME/toolchains/llvm/prebuilt/linux-x86_64/bin"
-
-          test -x "$TOOLCHAIN/aarch64-linux-android${ANDROID_API}-clang"
-
-          echo "TOOLCHAIN=$TOOLCHAIN" >> "$GITHUB_ENV"
-
-      - name: Configure QEMU
-        run: |
-          set -euo pipefail
-
-          cd "qemu-${QEMU_VERSION}"
-
-          export CC="$TOOLCHAIN/aarch64-linux-android${ANDROID_API}-clang"
-          export CXX="$TOOLCHAIN/aarch64-linux-android${ANDROID_API}-clang++"
-          export AR="$TOOLCHAIN/llvm-ar"
-          export RANLIB="$TOOLCHAIN/llvm-ranlib"
-          export STRIP="$TOOLCHAIN/llvm-strip"
-          export CFLAGS="-O2 -fPIE"
-          export CXXFLAGS="-O2 -fPIE"
-          export LDFLAGS="-pie"
-
-          ./configure \
-            --target-list=aarch64-softmmu \
-            --cross-prefix="$TOOLCHAIN/aarch64-linux-android-" \
-            --disable-docs \
-            --disable-tools \
-            --disable-guest-agent \
-            --disable-werror \
-            --disable-gtk \
-            --disable-sdl \
-            --disable-opengl \
-            --disable-curses \
-            --disable-kvm \
-            --disable-dbus-display \
-            --disable-slirp \
-            --disable-bzip2 \
-            --disable-libudev \
-            --disable-linux-aio
-
-      - name: Compile QEMU
-        run: |
-          set -euo pipefail
-
-          cd "qemu-${QEMU_VERSION}"
-
-          make -j2 qemu-system-aarch64
-
-          mkdir -p ../qemu-out/bin
-          mkdir -p ../qemu-out/share
-
-          cp build/qemu-system-aarch64 \
-            ../qemu-out/bin/
-
-          "$TOOLCHAIN/llvm-strip" \
-            ../qemu-out/bin/qemu-system-aarch64
-
-          bzip2 -dk pc-bios/edk2-aarch64-code.fd.bz2
-
-          cp pc-bios/edk2-aarch64-code.fd \
-            ../qemu-out/share/
-
-      - name: Verify QEMU
-        run: |
-          set -euo pipefail
-
-          BIN="qemu-out/bin/qemu-system-aarch64"
-
-          test -s "$BIN"
-          file "$BIN"
-          readelf -h "$BIN" | grep AArch64
-
-      - name: Upload QEMU
-        uses: actions/upload-artifact@v4
+          set -euxo pipefail
+          docker run --rm -v "$PWD:/w" -w /w alpine:3.20 sh -c '
+            set -e
+            apk add --no-cache build-base git python3 py3-setuptools ninja meson pkgconf bash flex bison perl curl xz bzip2 linux-headers
+            for p in glib-dev glib-static pixman-dev pixman-static zlib-dev zlib-static pcre2-dev libffi-dev gettext-dev gettext-static zstd-dev zstd-static util-linux-dev; do
+              apk add --no-cache "$p" || echo "SKIP $p"
+            done
+            cd /tmp
+            curl -fLO https://download.qemu.org/qemu-9.0.2.tar.xz
+            tar xf qemu-9.0.2.tar.xz
+            cd qemu-9.0.2
+            SLIRP=1
+            (git clone --depth 1 --branch v4.8.0 https://gitlab.freedesktop.org/slirp/libslirp.git /tmp/libslirp && cd /tmp/libslirp && meson setup build --default-library=static --prefix=/usr/local && ninja -C build install) || SLIRP=0
+            export PKG_CONFIG_PATH=/usr/local/lib/pkgconfig:/usr/local/lib64/pkgconfig
+            OPTS="--static --target-list=aarch64-softmmu --disable-docs --disable-tools --disable-guest-agent --disable-werror --disable-gtk --disable-sdl --disable-opengl --disable-curses --disable-kvm --disable-dbus-display --disable-gio --disable-bzip2 --enable-vnc"
+            if [ "$SLIRP" = 1 ]; then ./configure $OPTS --enable-slirp || ./configure $OPTS --disable-slirp; else ./configure $OPTS --disable-slirp; fi
+            make -j"$(nproc)" qemu-system-aarch64
+            build/qemu-system-aarch64 -display help 2>&1 | tee /tmp/qemu-display.txt
+            grep -qi vnc /tmp/qemu-display.txt
+            build/qemu-system-aarch64 -device help 2>&1 | grep -q "virtio-gpu-pci"
+            build/qemu-system-aarch64 -device help 2>&1 | grep -q "ramfb"
+            mkdir -p /w/qemu-out/share
+            strip build/qemu-system-aarch64
+            cp build/qemu-system-aarch64 /w/qemu-out/libqemu.so
+            bzip2 -dk pc-bios/edk2-aarch64-code.fd.bz2
+            cp pc-bios/edk2-aarch64-code.fd /w/qemu-out/share/
+            cp pc-bios/efi-virtio.rom /w/qemu-out/share/ 2>/dev/null || true
+            cp -r pc-bios/keymaps /w/qemu-out/share/ 2>/dev/null || true
+          '
+      - uses: actions/upload-artifact@v4
         with:
-          name: oneemu-qemu-arm64
-          path: qemu-out/
-          if-no-files-found: error
-
-  build-apk:
-    name: Build OneEmu APK
-    needs: build-qemu
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Download QEMU
-        uses: actions/download-artifact@v4
-        with:
-          name: oneemu-qemu-arm64
+          name: qemu-arm64
           path: qemu-out
 
-      - name: Locate project
+  apk:
+    needs: qemu
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          name: qemu-arm64
+          path: qemu-out
+      - name: Locate project and install ARM64 QEMU
         run: |
-          set -euo pipefail
-
-          SET=""
-
-          if [ -f settings.gradle.kts ]; then
-            SET="settings.gradle.kts"
-          elif [ -f settings.gradle ]; then
-            SET="settings.gradle"
-          else
-            SET=$(find . \
-              \( -name settings.gradle.kts -o -name settings.gradle \) \
-              -not -path '*/build/*' \
-              -not -path './.git/*' \
-              | head -n 1 || true)
-          fi
-
+          SET=$(find . -name settings.gradle.kts -not -path "./qemu-out/*" -not -path "*/build/*" | head -1)
           if [ -z "$SET" ] && [ -f OneEmu.zip ]; then
-            mkdir -p unpacked
-            unzip -q OneEmu.zip -d unpacked
-
-            SET=$(find unpacked \
-              \( -name settings.gradle.kts -o -name settings.gradle \) \
-              -not -path '*/build/*' \
-              | head -n 1 || true)
+            unzip -q -o OneEmu.zip -d unpacked
+            SET=$(find unpacked -name settings.gradle.kts | head -1)
           fi
-
-          if [ -z "$SET" ]; then
-            echo "ERROR: Gradle project not found"
-            exit 1
-          fi
-
+          if [ -z "$SET" ]; then echo "settings.gradle.kts not found"; exit 1; fi
           PROJ=$(dirname "$SET")
           echo "PROJ=$PROJ" >> "$GITHUB_ENV"
-
-      - name: Install QEMU assets
-        run: |
-          set -euo pipefail
-
-          DEST="$PROJ/app/src/main/assets/qemu"
-
-          mkdir -p "$DEST/bin" "$DEST/share"
-
-          cp qemu-out/bin/qemu-system-aarch64 "$DEST/bin/"
-          cp -r qemu-out/share/. "$DEST/share/"
-
-      - name: Set up Java
-        uses: actions/setup-java@v4
+          F="$PROJ/app/src/main/java/com/oneemu/app/HomeScreen.kt"
+          grep -q "ExperimentalFoundationApi" "$F" || sed -i '1i @file:OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)' "$F"
+          mkdir -p "$PROJ/app/src/main/jniLibs/arm64-v8a" "$PROJ/app/src/main/assets/qemu-share"
+          test -s qemu-out/libqemu.so
+          cp qemu-out/libqemu.so "$PROJ/app/src/main/jniLibs/arm64-v8a/libqemu.so"
+          cp -r qemu-out/share/. "$PROJ/app/src/main/assets/qemu-share/"
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - name: Accept Android SDK licenses
+        run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+      - uses: gradle/actions/setup-gradle@v3
+        with: { gradle-version: "8.7" }
+      - run: gradle -p "$PROJ" assembleDebug
+      - name: Verify ARM64 QEMU is packaged
+        run: unzip -l "$PROJ/app/build/outputs/apk/debug/app-debug.apk" | grep -E "libqemu\.so|qemu-share/edk2-aarch64-code.fd"
+      - uses: actions/upload-artifact@v4
         with:
-          distribution: temurin
-          java-version: "17"
-
-      - name: Set up Gradle
-        uses: gradle/actions/setup-gradle@v4
-
-      - name: Build APK
-        run: |
-          set -euo pipefail
-
-          cd "$PROJ"
-
-          if [ -f gradlew ]; then
-            chmod +x gradlew
-            ./gradlew --no-daemon assembleDebug
-          else
-            gradle --no-daemon assembleDebug
-          fi
-
-      - name: Verify APK
-        run: |
-          set -euo pipefail
-
-          APK="$PROJ/app/build/outputs/apk/debug/app-debug.apk"
-
-          test -s "$APK"
-
-          mkdir -p apk-check
-          unzip -q "$APK" -d apk-check
-
-          test -s apk-check/assets/qemu/bin/qemu-system-aarch64
-          test -s apk-check/assets/qemu/share/edk2-aarch64-code.fd
-
-          echo "APK verification passed"
-
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: OneEmu-APK
+          name: OneEmu-ARM64-APK
           path: ${{ env.PROJ }}/app/build/outputs/apk/debug/app-debug.apk
-          if-no-files-found: error
