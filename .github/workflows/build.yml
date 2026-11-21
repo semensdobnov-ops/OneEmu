@@ -9,128 +9,158 @@ permissions:
   contents: read
 
 concurrency:
-  group: oneemu-build-${{ github.ref }}
+  group: oneemu-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build-qemu:
-    name: Build QEMU ARM64
+    name: Build static QEMU ARM64
     runs-on: ubuntu-24.04-arm
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Build QEMU
-        shell: bash
+      - name: Install build dependencies
         run: |
           set -euo pipefail
 
-          docker run --rm \
-            -v "$PWD:/work" \
-            -w /work \
-            alpine:3.20 sh -euxc '
+          sudo apt-get update
 
-              apk add --no-cache \
-                build-base \
-                git \
-                python3 \
-                py3-setuptools \
-                ninja \
-                meson \
-                pkgconf \
-                bash \
-                flex \
-                bison \
-                perl \
-                curl \
-                xz \
-                linux-headers \
-                bzip2 \
-                glib-dev \
-                pixman-dev \
-                zlib-dev \
-                pcre2-dev \
-                libffi-dev \
-                gettext-dev \
-                zstd-dev \
-                util-linux-dev \
-                util-linux-static
+          sudo apt-get install -y \
+            build-essential \
+            git \
+            python3 \
+            python3-venv \
+            ninja-build \
+            meson \
+            pkg-config \
+            flex \
+            bison \
+            perl \
+            curl \
+            xz-utils \
+            bzip2 \
+            libglib2.0-dev \
+            libpixman-1-dev \
+            zlib1g-dev \
+            libpcre2-dev \
+            libffi-dev \
+            libzstd-dev \
+            libmount-dev \
+            libblkid-dev \
+            libfdt-dev \
+            libcap-dev \
+            libattr1-dev
 
-              cd /tmp
-
-              curl -fL \
-                https://download.qemu.org/qemu-9.0.2.tar.xz \
-                -o qemu.tar.xz
-
-              tar -xf qemu.tar.xz
-
-              cd qemu-9.0.2
-
-              ./configure \
-                --target-list=aarch64-softmmu \
-                --disable-docs \
-                --disable-tools \
-                --disable-guest-agent \
-                --disable-werror \
-                --disable-gtk \
-                --disable-sdl \
-                --disable-opengl \
-                --disable-curses \
-                --disable-kvm \
-                --disable-dbus-display \
-                --disable-slirp \
-                --disable-bzip2 \
-                --disable-libudev \
-                --disable-linux-aio
-
-              make -j"$(nproc)" qemu-system-aarch64
-
-              mkdir -p /work/qemu-out/bin
-              mkdir -p /work/qemu-out/share
-
-              cp build/qemu-system-aarch64 \
-                /work/qemu-out/bin/qemu-system-aarch64
-
-              strip /work/qemu-out/bin/qemu-system-aarch64
-
-              bzip2 -dk pc-bios/edk2-aarch64-code.fd.bz2
-
-              cp pc-bios/edk2-aarch64-code.fd \
-                /work/qemu-out/share/
-
-              if [ -f pc-bios/efi-virtio.rom ]; then
-                cp pc-bios/efi-virtio.rom \
-                  /work/qemu-out/share/
-              fi
-
-              if [ -d build/pc-bios/keymaps ]; then
-                cp -r build/pc-bios/keymaps \
-                  /work/qemu-out/share/
-              fi
-
-              echo "QEMU build completed"
-            '
-
-      - name: Verify QEMU
+      - name: Verify static libraries
         run: |
           set -euo pipefail
 
-          test -s qemu-out/bin/qemu-system-aarch64
-          test -s qemu-out/share/edk2-aarch64-code.fd
+          echo "Checking required static libraries..."
 
-          file qemu-out/bin/qemu-system-aarch64
-
-          readelf -h qemu-out/bin/qemu-system-aarch64 \
-            | grep AArch64
-
-          readelf -l qemu-out/bin/qemu-system-aarch64 \
-            | grep INTERP && {
-              echo "ERROR: QEMU is dynamically linked"
+          find /usr/lib -name 'libmount.a' -print -quit \
+            | grep -q . || {
+              echo "ERROR: libmount.a is missing"
               exit 1
-            } || true
+            }
 
-          chmod 755 qemu-out/bin/qemu-system-aarch64
+          find /usr/lib -name 'libblkid.a' -print -quit \
+            | grep -q . || {
+              echo "ERROR: libblkid.a is missing"
+              exit 1
+            }
+
+          echo "Static libraries found"
+
+      - name: Download QEMU source
+        run: |
+          set -euo pipefail
+
+          curl -fL \
+            https://download.qemu.org/qemu-9.0.2.tar.xz \
+            -o qemu.tar.xz
+
+          tar -xf qemu.tar.xz
+
+      - name: Configure and compile QEMU
+        run: |
+          set -euo pipefail
+
+          cd qemu-9.0.2
+
+          export CFLAGS="-O2"
+          export LDFLAGS="-static"
+
+          ./configure \
+            --static \
+            --target-list=aarch64-softmmu \
+            --disable-docs \
+            --disable-tools \
+            --disable-guest-agent \
+            --disable-werror \
+            --disable-gtk \
+            --disable-sdl \
+            --disable-opengl \
+            --disable-curses \
+            --disable-kvm \
+            --disable-dbus-display \
+            --disable-slirp \
+            --disable-bzip2 \
+            --disable-libudev \
+            --disable-linux-aio
+
+          make -j2 qemu-system-aarch64
+
+          mkdir -p ../qemu-out/bin
+          mkdir -p ../qemu-out/share
+
+          cp build/qemu-system-aarch64 \
+            ../qemu-out/bin/qemu-system-aarch64
+
+          strip ../qemu-out/bin/qemu-system-aarch64
+
+          bzip2 -dk pc-bios/edk2-aarch64-code.fd.bz2
+
+          cp pc-bios/edk2-aarch64-code.fd \
+            ../qemu-out/share/
+
+          if [ -f pc-bios/efi-virtio.rom ]; then
+            cp pc-bios/efi-virtio.rom \
+              ../qemu-out/share/
+          fi
+
+          if [ -d build/pc-bios/keymaps ]; then
+            cp -r build/pc-bios/keymaps \
+              ../qemu-out/share/
+          fi
+
+      - name: Verify static QEMU
+        run: |
+          set -euo pipefail
+
+          BIN="qemu-out/bin/qemu-system-aarch64"
+
+          test -s "$BIN"
+          test -s "qemu-out/share/edk2-aarch64-code.fd"
+
+          file "$BIN"
+
+          readelf -h "$BIN" | grep AArch64
+
+          if readelf -l "$BIN" | grep -q INTERP; then
+            echo "ERROR: QEMU has a dynamic interpreter"
+            exit 1
+          fi
+
+          file "$BIN" | grep -q "statically linked" || {
+            echo "ERROR: QEMU is not statically linked"
+            exit 1
+          }
+
+          chmod 755 "$BIN"
+
+          echo "Static QEMU verification passed"
 
       - name: Upload QEMU
         uses: actions/upload-artifact@v4
@@ -154,7 +184,7 @@ jobs:
           name: oneemu-qemu-arm64
           path: qemu-out
 
-      - name: Locate project
+      - name: Locate OneEmu project
         run: |
           set -euo pipefail
 
@@ -162,9 +192,11 @@ jobs:
 
           if [ -f settings.gradle.kts ]; then
             SET="settings.gradle.kts"
+          elif [ -f settings.gradle ]; then
+            SET="settings.gradle"
           else
             SET=$(find . \
-              -name settings.gradle.kts \
+              \( -name settings.gradle.kts -o -name settings.gradle \) \
               -not -path './qemu-out/*' \
               -not -path '*/build/*' \
               -not -path './.git/*' \
@@ -176,13 +208,14 @@ jobs:
             unzip -q OneEmu.zip -d unpacked
 
             SET=$(find unpacked \
-              -name settings.gradle.kts \
+              \( -name settings.gradle.kts -o -name settings.gradle \) \
               -not -path '*/build/*' \
               | head -n 1 || true)
           fi
 
           if [ -z "$SET" ]; then
-            echo "ERROR: Project not found"
+            echo "ERROR: Gradle project not found"
+            find . -maxdepth 4 -type f | head -100
             exit 1
           fi
 
@@ -190,30 +223,30 @@ jobs:
 
           echo "PROJ=$PROJ" >> "$GITHUB_ENV"
 
-          echo "Project found: $PROJ"
+          echo "Project: $PROJ"
 
-      - name: Check project
+      - name: Check Android project
         run: |
           set -euo pipefail
 
           test -f "$PROJ/app/src/main/AndroidManifest.xml"
-
           test -s qemu-out/bin/qemu-system-aarch64
           test -s qemu-out/share/edk2-aarch64-code.fd
 
-      - name: Install QEMU assets
+      - name: Copy QEMU into Android assets
         run: |
           set -euo pipefail
 
-          mkdir -p \
-            "$PROJ/app/src/main/assets/qemu/bin" \
-            "$PROJ/app/src/main/assets/qemu/share"
+          DEST="$PROJ/app/src/main/assets/qemu"
+
+          mkdir -p "$DEST/bin" "$DEST/share"
 
           cp qemu-out/bin/qemu-system-aarch64 \
-            "$PROJ/app/src/main/assets/qemu/bin/"
+            "$DEST/bin/"
 
-          cp -r qemu-out/share/. \
-            "$PROJ/app/src/main/assets/qemu/share/"
+          cp -r qemu-out/share/. "$DEST/share/"
+
+          find "$DEST" -type f -ls
 
       - name: Set up Java
         uses: actions/setup-java@v4
@@ -224,7 +257,7 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Accept Android licenses
+      - name: Accept Android SDK licenses
         run: |
           yes | sdkmanager --licenses >/dev/null || true
 
@@ -244,7 +277,7 @@ jobs:
             gradle --no-daemon assembleDebug
           fi
 
-      - name: Verify APK
+      - name: Verify APK contents
         run: |
           set -euo pipefail
 
@@ -261,7 +294,7 @@ jobs:
           test -s \
             apk-check/assets/qemu/share/edk2-aarch64-code.fd
 
-          echo "APK verification successful"
+          echo "APK contains QEMU and firmware"
 
       - name: Upload APK
         uses: actions/upload-artifact@v4
@@ -269,3 +302,13 @@ jobs:
           name: OneEmu-APK
           path: ${{ env.PROJ }}/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OneEmu-build-logs
+          path: |
+            qemu-9.0.2/config.log
+            qemu-9.0.2/meson-logs/
+          if-no-files-found: warn
